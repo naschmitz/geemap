@@ -13,6 +13,8 @@ More WMS basemaps can be found at the following websites:
 """
 
 import collections
+import functools
+import operator
 import os
 import requests
 import folium
@@ -222,62 +224,32 @@ wms_tiles = {
 }
 
 
-def _unpack_sub_parameters(var, param):
-    temp = var
-    for sub_param in param.split("."):
-        temp = getattr(temp, sub_param)
-    return temp
-
-
 def get_xyz_dict(free_only=True, france=False):
-    """Returns a dictionary of xyz services.
+    """Returns an ordered dictionary of xyz services.
 
     Args:
         free_only (bool, optional): Whether to return only free xyz tile services that do not require an access token. Defaults to True.
         france (bool, optional): Whether include Geoportail France basemaps. Defaults to False.
 
     Returns:
-        dict: A dictionary of xyz services.
+        dict: An ordered dictionary of xyz services.
     """
 
-    xyz_dict_tmp = {}
+    ret = {}
     for item in xyz.values():
-        try:
-            name = item["name"]
-            tile = _unpack_sub_parameters(xyz, name)
-            if _unpack_sub_parameters(xyz, name).requires_token():
-                if free_only:
-                    pass
-                else:
-                    xyz_dict_tmp[name] = tile
-            else:
-                xyz_dict_tmp[name] = tile
-            tile["type"] = "xyz"
-
-        except Exception:
-            for sub_item in item:
-                name = item[sub_item]["name"]
-                tile = _unpack_sub_parameters(xyz, name)
-                if _unpack_sub_parameters(xyz, name).requires_token():
-                    if free_only:
-                        pass
-                    else:
-                        xyz_dict_tmp[name] = tile
-                else:
-                    xyz_dict_tmp[name] = tile
-                tile["type"] = "xyz"
-
-    xyz_dict = {}
-
-    if france:
-        xyz_dict = xyz_dict_tmp
-    else:
-        for key in xyz_dict_tmp:
-            if "France" not in key:
-                xyz_dict[key] = xyz_dict_tmp[key]
-
-    xyz_dict = collections.OrderedDict(sorted(xyz_dict.items()))
-    return xyz_dict
+      names = []
+      if "name" in item:
+        names = [item["name"]]
+      else:
+        names = [item[i]["name"] for i in item]
+      for name in names:
+          tile = functools.reduce(operator.getitem, name.split("."), xyz)
+          if not tile.requires_token() or not free_only:
+              ret[name] = tile
+    
+    if not france:
+        ret = dict(filter(lambda item: "France" not in item[0], ret.items()))
+    return collections.OrderedDict(sorted(ret.items()))
 
 
 def xyz_to_leaflet():
