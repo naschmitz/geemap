@@ -18,6 +18,7 @@ from IPython.display import display
 from .basemaps import xyz_to_leaflet
 from .common import *
 from .conversion import *
+from .ee_leaflet_tile_layer import *
 from .timelapse import *
 from .plot import *
 
@@ -7052,72 +7053,7 @@ def ee_tile_layer(
         shown (bool, optional): A flag indicating whether the layer should be on by default. Defaults to True.
         opacity (float, optional): The layer's opacity represented as a number between 0 and 1. Defaults to 1.
     """
-
-    image = None
-
-    if (
-        not isinstance(ee_object, ee.Image)
-        and not isinstance(ee_object, ee.ImageCollection)
-        and not isinstance(ee_object, ee.FeatureCollection)
-        and not isinstance(ee_object, ee.Feature)
-        and not isinstance(ee_object, ee.Geometry)
-    ):
-        err_str = "\n\nThe image argument in 'addLayer' function must be an instance of one of ee.Image, ee.Geometry, ee.Feature or ee.FeatureCollection."
-        raise AttributeError(err_str)
-
-    if (
-        isinstance(ee_object, ee.geometry.Geometry)
-        or isinstance(ee_object, ee.feature.Feature)
-        or isinstance(ee_object, ee.featurecollection.FeatureCollection)
-    ):
-        features = ee.FeatureCollection(ee_object)
-
-        width = 2
-
-        if "width" in vis_params:
-            width = vis_params["width"]
-
-        color = "000000"
-
-        if "color" in vis_params:
-            color = vis_params["color"]
-
-        image_fill = features.style(**{"fillColor": color}).updateMask(
-            ee.Image.constant(0.5)
-        )
-        image_outline = features.style(
-            **{"color": color, "fillColor": "00000000", "width": width}
-        )
-
-        image = image_fill.blend(image_outline)
-    elif isinstance(ee_object, ee.image.Image):
-        image = ee_object
-    elif isinstance(ee_object, ee.imagecollection.ImageCollection):
-        image = ee_object.mosaic()
-
-    if "palette" in vis_params:
-        if isinstance(vis_params["palette"], Box):
-            try:
-                vis_params["palette"] = vis_params["palette"]["default"]
-            except Exception as e:
-                print("The provided palette is invalid.")
-                raise Exception(e)
-        elif isinstance(vis_params["palette"], str):
-            vis_params["palette"] = check_cmap(vis_params["palette"])
-        elif not isinstance(vis_params["palette"], list):
-            raise ValueError(
-                "The palette must be a list of colors or a string or a Box object."
-            )
-
-    map_id_dict = ee.Image(image).getMapId(vis_params)
-    tile_layer = ipyleaflet.TileLayer(
-        url=map_id_dict["tile_fetcher"].url_format,
-        attribution="Google Earth Engine",
-        name=name,
-        opacity=opacity,
-        visible=shown,
-    )
-    return tile_layer
+    return EeLeafletTileLayer(ee_object, vis_params, name, shown, opacity)
 
 
 def linked_maps(
