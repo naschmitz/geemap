@@ -694,6 +694,9 @@ class Map(ipyleaflet.Map):
 
         super().add(object)
 
+        if hasattr(self, "layer_manager_widget"):
+            self.update_layer_manager()
+
     def set_options(self, mapTypeId="HYBRID", styles=None, types=None):
         """Adds Google basemap and controls to the ipyleaflet map.
 
@@ -1900,6 +1903,7 @@ class Map(ipyleaflet.Map):
             )
 
             self.add(control)
+            self.dragging = False
 
             if left_label is not None:
                 if widget_layout is None:
@@ -2141,6 +2145,7 @@ class Map(ipyleaflet.Map):
                 left_layer=left_layer, right_layer=right_layer
             )
             self.add(split_control)
+            self.dragging = False
 
             if add_close_button:
                 self.add(close_control)
@@ -6760,6 +6765,12 @@ class Map(ipyleaflet.Map):
 
         layer_manager_gui(self, position, opened)
 
+    def update_layer_manager(self):
+        """Update the Layer Manager."""
+        from .toolbar import layer_manager_gui
+
+        self.layer_manager_widget.children = layer_manager_gui(self, return_widget=True)
+
     def add_widget(self, content, position="bottomright", **kwargs):
         """Add a widget (e.g., text, HTML, figure) to the map.
 
@@ -7206,6 +7217,7 @@ def ts_inspector(
     m = Map(center=center, zoom=zoom, **kwargs)
     control = ipyleaflet.SplitMapControl(left_layer=left_layer, right_layer=right_layer)
     m.add(control)
+    m.dragging = False
 
     left_dropdown = widgets.Dropdown(
         options=keys, value=left_name, layout=widgets.Layout(width=width)

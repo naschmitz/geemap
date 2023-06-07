@@ -3206,6 +3206,7 @@ def split_basemaps(
 
     control = ipyleaflet.SplitMapControl(left_layer=left_layer, right_layer=right_layer)
     m.add_control(control)
+    m.dragging = False
 
     left_dropdown = widgets.Dropdown(
         options=keys, value=left_name, layout=widgets.Layout(width=width)
@@ -5007,6 +5008,9 @@ def layer_manager_gui(m, position="topright", opened=True, return_widget=False):
 
     layers_button.observe(layers_btn_click, "value")
     layers_button.value = opened
+
+    if not hasattr(m, "layer_manager_widget"):
+        m.layer_manager_widget = toolbar_footer
 
     if return_widget:
         return m.layer_widget
