@@ -37,6 +37,8 @@ class Map(ipyleaflet.Map):
     Returns:
         object: ipyleaflet map object.
     """
+    
+    inspector_control = None
 
     def __init__(self, **kwargs):
         import warnings
@@ -6562,7 +6564,7 @@ class Map(ipyleaflet.Map):
         if self.inspector_control:
             return
 
-        inspector = Inspector(self, names, visible, decimals, position, opened)
+        inspector = Inspector(self, names, visible, decimals, opened)
         self.inspector_control = ipyleaflet.WidgetControl(widget=inspector, position=position)
         self.add(self.inspector_control)
 
