@@ -2,7 +2,6 @@
 
 import ipywidgets
 
-from IPython.core.display import display
 import ee
 import ipytree
 from . import common
@@ -140,18 +139,21 @@ class Colorbar(ipywidgets.Output):
 
 
 class Inspector(ipywidgets.VBox):
-    host_map = None
-    expand_point = False
-    expand_pixels = True
-    expand_objects = False
-    on_close = None
-
     def __init__(self, host_map, names=None, visible=True, decimals=2, opened=True):
-        self.host_map = host_map
-        self.names = names
-        self.visible = visible
-        self.decimals = decimals
-        self.opened = opened
+        self._host_map = host_map
+        if not host_map:
+            raise ValueError("Must pass a valid map when creating an inspector.")
+
+        self._names = names
+        self._visible = visible
+        self._decimals = decimals
+        self._opened = opened
+
+        self.on_close = None
+
+        self._expand_point_tree = False
+        self._expand_pixels_tree = True
+        self._expand_objects_tree = False
 
         host_map.default_style = {"cursor": "crosshair"}
 
@@ -173,40 +175,42 @@ class Inspector(ipywidgets.VBox):
         )
         close_button.observe(self._on_close_btn_click, "value")
 
-        self.inspector_output = ipywidgets.Output(
-            layout=ipywidgets.Layout(
-                max_width="600px", max_height="500px", overflow="auto"
-            )
-        )
-        expand_point = self._create_expand_checkbox("Point", self.expand_point)
-        expand_pixels = self._create_expand_checkbox("Pixels", self.expand_pixels)
-        expand_objects = self._create_expand_checkbox("Objects", self.expand_objects)
-        expand_point.observe(self._on_expand_point_changed, "value")
-        expand_pixels.observe(self._on_expand_pixels_changed, "value")
-        expand_objects.observe(self._on_expand_objects_changed, "value")
+        point_checkbox = self._create_checkbox("Point", self._expand_point_tree)
+        pixels_checkbox = self._create_checkbox("Pixels", self._expand_pixels_tree)
+        objects_checkbox = self._create_checkbox("Objects", self._expand_objects_tree)
+        point_checkbox.observe(self._on_point_checkbox_changed, "value")
+        pixels_checkbox.observe(self._on_pixels_checkbox_changed, "value")
+        objects_checkbox.observe(self._on_objects_checkbox_changed, "value")
         self.inspector_checks = ipywidgets.HBox(
             children=[
                 ipywidgets.Label(
                     "Expand", layout=ipywidgets.Layout(padding="0px 8px 0px 4px")
                 ),
-                expand_point,
-                expand_pixels,
-                expand_objects,
+                point_checkbox,
+                pixels_checkbox,
+                objects_checkbox,
             ]
         )
-        self._clear_inspector_output()
 
         self.toolbar_header = ipywidgets.HBox(
             children=[close_button, self.toolbar_button]
         )
-        self.toolbar_footer = ipywidgets.VBox(children=[self.inspector_output])
+        self.tree_output = ipywidgets.VBox(
+            children=[],
+            layout=ipywidgets.Layout(
+                max_width="600px", max_height="300px", overflow="auto", display="block"
+            ),
+        )
+        self._clear_inspector_output()
 
         host_map.on_interaction(self._on_map_interaction)
         self.toolbar_button.value = opened
 
-        super().__init__(children=[self.toolbar_header, self.toolbar_footer])
+        super().__init__(
+            children=[self.toolbar_header, self.inspector_checks, self.tree_output]
+        )
 
-    def _create_expand_checkbox(self, title, checked):
+    def _create_checkbox(self, title, checked):
         layout = ipywidgets.Layout(width="auto", padding="0px 6px 0px 0px")
         return ipywidgets.Checkbox(
             description=title, indent=False, value=checked, layout=layout
@@ -214,67 +218,71 @@ class Inspector(ipywidgets.VBox):
 
     def _on_map_interaction(self, **kwargs):
         latlon = kwargs.get("coordinates")
-        if kwargs.get("type") == "click" and self.toolbar_button.value:
-            self.host_map.default_style = {"cursor": "wait"}
+        if kwargs.get("type") == "click":
+            self._on_map_click(latlon)
+
+    def _on_map_click(self, latlon):
+        if self.toolbar_button.value:
+            self._host_map.default_style = {"cursor": "wait"}
             self._clear_inspector_output()
-            tree = ipytree.Tree()
-            nodes = []
-            nodes.append(self._point_info(latlon, return_node=True))
-            pixels_node = self._pixels_info(latlon, return_node=True)
+
+            nodes = [self._point_info(latlon)]
+            pixels_node = self._pixels_info(latlon)
             if pixels_node.nodes:
                 nodes.append(pixels_node)
-            objects_node = self._objects_info(latlon, return_node=True)
+            objects_node = self._objects_info(latlon)
             if objects_node.nodes:
                 nodes.append(objects_node)
-            tree.nodes = nodes
-            with self.inspector_output:
-                display(tree)
-            self.host_map.default_style = {"cursor": "crosshair"}
+
+            self.tree_output.children = [ipytree.Tree(nodes=nodes)]
+            self._host_map.default_style = {"cursor": "crosshair"}
 
     def _clear_inspector_output(self):
-        with self.inspector_output:
-            self.inspector_output.clear_output(wait=True)
-            display(self.inspector_checks)
+        self.tree_output.children = []
 
-    def _on_expand_point_changed(self, change):
-        self.expand_point = change["new"]
+    def _on_point_checkbox_changed(self, change):
+        self._expand_point_tree = change["new"]
 
-    def _on_expand_pixels_changed(self, change):
-        self.expand_pixels = change["new"]
+    def _on_pixels_checkbox_changed(self, change):
+        self._expand_pixels_tree = change["new"]
 
-    def _on_expand_objects_changed(self, change):
-        self.expand_objects = change["new"]
+    def _on_objects_checkbox_changed(self, change):
+        self._expand_objects_tree = change["new"]
 
     def _on_toolbar_btn_click(self, change):
         if change["new"]:
-            self.host_map.default_style = {"cursor": "crosshair"}
-            self.children = [self.toolbar_header, self.toolbar_footer]
+            self._host_map.default_style = {"cursor": "crosshair"}
+            self.children = [
+                self.toolbar_header,
+                self.inspector_checks,
+                self.tree_output,
+            ]
             self._clear_inspector_output()
         else:
             self.children = [self.toolbar_button]
-            self.host_map.default_style = {"cursor": "default"}
+            self._host_map.default_style = {"cursor": "default"}
 
     def _on_close_btn_click(self, change):
         if change["new"]:
-            if self.host_map:
-                self.host_map.default_style = {"cursor": "default"}
-                self.host_map.on_interaction(self._on_map_interaction, remove=True)
+            if self._host_map:
+                self._host_map.default_style = {"cursor": "default"}
+                self._host_map.on_interaction(self._on_map_interaction, remove=True)
             if self.on_close is not None:
                 self.on_close()
 
     def _get_visible_map_layers(self):
         layers = {}
-        if self.names:
-            names = [names] if isinstance(names, str) else self.names
+        if self._names is not None:
+            names = [names] if isinstance(names, str) else self._names
             for name in names:
-                if name in self.host_map.ee_layer_names:
-                    layers[name] = self.host_map.ee_layer_dict[name]
+                if name in self._host_map.ee_layer_names:
+                    layers[name] = self._host_map.ee_layer_dict[name]
         else:
-            layers = self.host_map.ee_layer_dict
+            layers = self._host_map.ee_layer_dict
         return {k: v for k, v in layers.items() if v["ee_layer"].visible}
 
-    def _root_node(self, title, nodes, return_node, **kwargs):
-        root_node = ipytree.Node(
+    def _root_node(self, title, nodes, **kwargs):
+        return ipytree.Node(
             title,
             icon="archive",
             nodes=nodes,
@@ -284,73 +292,78 @@ class Inspector(ipywidgets.VBox):
             close_icon_style="info",
             **kwargs,
         )
-        return root_node if return_node else ipytree.Tree(nodes=[root_node])
 
-    def _point_info(self, latlon, return_node=False):
-        scale = self.host_map.get_scale()
-        label = f"Point ({latlon[1]:.{self.decimals}f}, {latlon[0]:.{self.decimals}f}) at {int(scale)}m/px"
+    def _point_info(self, latlon):
+        scale = self._host_map.get_scale()
+        label = f"Point ({latlon[1]:.{self._decimals}f}, {latlon[0]:.{self._decimals}f}) at {int(scale)}m/px"
         nodes = [
             ipytree.Node(f"Longitude: {latlon[1]}"),
             ipytree.Node(f"Latitude: {latlon[0]}"),
-            ipytree.Node(f"Zoom Level: {self.host_map.zoom}"),
+            ipytree.Node(f"Zoom Level: {self._host_map.zoom}"),
             ipytree.Node(f"Scale (approx. m/px): {scale}"),
         ]
-        return self._root_node(label, nodes, return_node, opened=self.expand_point)
+        return self._root_node(label, nodes, opened=self._expand_point_tree)
 
-    def _pixels_info(self, latlon, return_node=False):
-        if not self.visible:
-            return self._root_node("Pixels", [], return_node)
+    def _query_point(self, latlon, ee_object):
+        point = ee.Geometry.Point(latlon[::-1])
+        scale = self._host_map.get_scale()
+        if isinstance(ee_object, ee.ImageCollection):
+            ee_object = ee_object.mosaic()
+        if isinstance(ee_object, ee.Image):
+            return ee_object.reduceRegion(ee.Reducer.first(), point, scale).getInfo()
+        return None
 
-        layers = self._get_visible_map_layers()
-        xy = ee.Geometry.Point(latlon[::-1])
-        scale = self.host_map.getScale()
-        nodes = []
-        for layer_name, layer in layers.items():
-            obj = layer["ee_object"]
-            if isinstance(obj, ee.ImageCollection):
-                obj = obj.mosaic()
-            if isinstance(obj, ee.Image):
-                try:
-                    item = obj.reduceRegion(ee.Reducer.first(), xy, scale).getInfo()
-                except:
-                    continue
-                b_name = "band" if len(item) == 1 else "bands"
-                obj_type = obj.__class__.__name__
-                label = f"{layer_name}: {obj_type} ({len(item)} {b_name})"
-                layer_node = ipytree.Node(label, opened=self.expand_pixels)
-                for key, value in sorted(item.items()):
-                    if isinstance(value, float):
-                        value = round(value, self.decimals)
-                    layer_node.add_node(ipytree.Node(f"{key}: {value}", icon="file"))
-                nodes.append(layer_node)
-
-        return self._root_node("Pixels", nodes, return_node)
-
-    def _objects_info(self, latlon, return_node=False):
-        if not self.visible:
-            return self._root_node("Objects", [], return_node)
+    def _pixels_info(self, latlon):
+        if not self._visible:
+            return self._root_node("Pixels", [])
 
         layers = self._get_visible_map_layers()
-        xy = ee.Geometry.Point(latlon[::-1])
         nodes = []
         for layer_name, layer in layers.items():
-            obj = layer["ee_object"]
-            if isinstance(obj, ee.FeatureCollection):
-                geom_type = ee.Feature(obj.first()).geometry().type()
-                lat, lon = latlon
-                delta = 0.005
-                bbox = ee.Geometry.BBox(
-                    lon - delta, lat - delta, lon + delta, lat + delta
+            ee_object = layer["ee_object"]
+            pixel = self._query_point(latlon, ee_object)
+            if not pixel:
+                continue
+            pluralized_band = "band" if len(pixel) == 1 else "bands"
+            ee_obj_type = ee_object.__class__.__name__
+            label = f"{layer_name}: {ee_obj_type} ({len(pixel)} {pluralized_band})"
+            layer_node = ipytree.Node(label, opened=self._expand_pixels_tree)
+            for key, value in sorted(pixel.items()):
+                if isinstance(value, float):
+                    value = round(value, self._decimals)
+                layer_node.add_node(ipytree.Node(f"{key}: {value}", icon="file"))
+            nodes.append(layer_node)
+
+        return self._root_node("Pixels", nodes)
+
+    def _get_bbox(self, latlon):
+        lat, lon = latlon
+        delta = 0.005
+        return ee.Geometry.BBox(lon - delta, lat - delta, lon + delta, lat + delta)
+
+    def _objects_info(self, latlon):
+        if not self._visible:
+            return self._root_node("Objects", [])
+
+        layers = self._get_visible_map_layers()
+        point = ee.Geometry.Point(latlon[::-1])
+        nodes = []
+        for layer_name, layer in layers.items():
+            ee_object = layer["ee_object"]
+            if isinstance(ee_object, ee.FeatureCollection):
+                geom = ee.Feature(ee_object.first()).geometry()
+                bbox = self._get_bbox(latlon)
+                is_point = ee.Algorithms.If(
+                    geom.type().compareTo(ee.String("Point")), point, bbox
                 )
-                xy = ee.Algorithms.If(geom_type.compareTo(ee.String("Point")), xy, bbox)
-                obj = obj.filterBounds(xy).first()
-            try:
+                ee_object = ee_object.filterBounds(is_point).first()
                 nodes.append(
                     common.get_info(
-                        obj, layer_name, opened=self.expand_objects, return_node=True
+                        ee_object,
+                        layer_name,
+                        opened=self._expand_objects_tree,
+                        return_node=True,
                     )
                 )
-            except:
-                pass
 
-        return self._root_node("Objects", nodes, return_node)
+        return self._root_node("Objects", nodes)
