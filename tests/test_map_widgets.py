@@ -3,12 +3,13 @@
 """Tests for `map_widgets` module."""
 import unittest
 from unittest.mock import patch, MagicMock, Mock, ANY
-from geemap import map_widgets
-from tests import fake_ee, fake_map
 
 import ipytree
 import ipywidgets
 import ee
+
+from geemap import map_widgets
+from tests import fake_ee, fake_map
 
 
 class TestColorbar(unittest.TestCase):

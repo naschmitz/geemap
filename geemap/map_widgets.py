@@ -1,9 +1,9 @@
 """Various ipywidgets that can be added to a map."""
 
-import ipywidgets
-
 import ee
 import ipytree
+import ipywidgets
+
 from . import common
 
 
