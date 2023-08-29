@@ -32,6 +32,8 @@ from .timelapse import *
 
 from . import examples
 
+from .core import core_map
+from .core import core_utils
 
 basemaps = Box(xyz_to_leaflet(), frozen_box=True)
 
@@ -118,7 +120,7 @@ class MapDrawControl(ipyleaflet.DrawControl, map_widgets.AbstractDrawControl):
         return self.clear()
 
 
-class Map(ipyleaflet.Map):
+class Map(core_map.LeafletMap):
     """The Map class inherits the ipyleaflet Map class. The arguments you can pass to the Map initialization
         can be found at https://ipyleaflet.readthedocs.io/en/latest/map_and_basemaps/map.html.
         By default, the Map will add Google Maps as the basemap. Set add_google_map = False
@@ -176,6 +178,12 @@ class Map(ipyleaflet.Map):
         """
         warnings.filterwarnings("ignore")
 
+        if isinstance(kwargs.get("height"), int):
+            kwargs["height"] = str(kwargs["height"]) + "px"
+        if isinstance(kwargs.get("width"), int):
+            kwargs["width"] = str(kwargs["width"]) + "px"
+        super().__init__(**kwargs)
+
         # Authenticates Earth Engine and initializes an Earth Engine session
         if "ee_initialize" not in kwargs:
             kwargs["ee_initialize"] = True
@@ -183,27 +191,10 @@ class Map(ipyleaflet.Map):
         if kwargs["ee_initialize"]:
             ee_initialize()
 
-        # Default map center center (lat, lon) and zoom level
-        center = [20, 0]
-        zoom = 2
-
         self.inspector_control = None
         self.layer_manager_widget = None
         self.layer_manager_control = None
 
-        # Set map width and height
-        if "height" not in kwargs:
-            kwargs["height"] = "600px"
-        elif isinstance(kwargs["height"], int):
-            kwargs["height"] = str(kwargs["height"]) + "px"
-        if "width" in kwargs and isinstance(kwargs["width"], int):
-            kwargs["width"] = str(kwargs["width"]) + "px"
-
-        # Set map center and zoom level
-        if "center" not in kwargs:
-            kwargs["center"] = center
-        if "zoom" not in kwargs:
-            kwargs["zoom"] = zoom
         if "max_zoom" not in kwargs:
             kwargs["max_zoom"] = 24
 
@@ -220,12 +211,7 @@ class Map(ipyleaflet.Map):
             else:
                 kwargs.pop("basemap")
 
-        # Inherits the ipyleaflet Map class
-        super().__init__(**kwargs)
         self.baseclass = "ipyleaflet"
-        self.layout.height = kwargs["height"]
-        if "width" in kwargs:
-            self.layout.width = kwargs["width"]
 
         # sandbox path for Voila app to restrict access to system directories.
         if "sandbox_path" not in kwargs:
@@ -277,13 +263,11 @@ class Map(ipyleaflet.Map):
 
         # Map attributes for layers
         self.geojson_layers = []
-        self.ee_layers = []
-        self.ee_layer_names = []
+        self.ee_layers = {}
         self.ee_raster_layers = []
         self.ee_raster_layer_names = []
         self.ee_vector_layers = []
         self.ee_vector_layer_names = []
-        self.ee_layer_dict = {}
 
         # ipyleaflet built-in layer control
         self.layer_control = None
@@ -292,6 +276,14 @@ class Map(ipyleaflet.Map):
         if kwargs["ee_initialize"]:
             self.roi_reducer = ee.Reducer.mean()
         self.roi_reducer_scale = None
+
+    @property
+    def ee_layer_names(self):
+        return self.ee_layers.items()
+
+    @property
+    def ee_layer_dict(self):
+        return self.ee_layers
 
     def add(self, object):
         """Adds a layer or control to the map.
@@ -405,7 +397,7 @@ class Map(ipyleaflet.Map):
 
         layer = self.find_layer(name=name)
         if layer is not None:
-            existing_object = self.ee_layer_dict[name]["ee_object"]
+            existing_object = self.ee_layers[name]["ee_object"]
 
             if isinstance(existing_object, (ee.Image, ee.ImageCollection)):
                 self.ee_raster_layers.remove(existing_object)
@@ -421,14 +413,11 @@ class Map(ipyleaflet.Map):
                 self.ee_vector_layers.remove(existing_object)
                 self.ee_vector_layer_names.remove(name)
 
-            self.ee_layers.remove(existing_object)
-            self.ee_layer_names.remove(name)
+            self.ee_layers.pop(name)
             self.remove_layer(layer)
 
-        self.ee_layers.append(ee_object)
-        if name not in self.ee_layer_names:
-            self.ee_layer_names.append(name)
-        self.ee_layer_dict[name] = {
+        self.ee_layers.pop(name, None)
+        self.ee_layers[name] = {
             "ee_object": ee_object,
             "ee_layer": tile_layer,
             "vis_params": vis_params,
@@ -458,17 +447,16 @@ class Map(ipyleaflet.Map):
         Args:
             name (str): The name of the Earth Engine layer to remove.
         """
-        if name in self.ee_layer_dict:
-            ee_object = self.ee_layer_dict[name]["ee_object"]
-            ee_layer = self.ee_layer_dict[name]["ee_layer"]
+        if name in self.ee_layers:
+            ee_object = self.ee_layers[name]["ee_object"]
+            ee_layer = self.ee_layers[name]["ee_layer"]
             if name in self.ee_raster_layer_names:
                 self.ee_raster_layer_names.remove(name)
                 self.ee_raster_layers.remove(ee_object)
             elif name in self.ee_vector_layer_names:
                 self.ee_vector_layer_names.remove(name)
                 self.ee_vector_layers.remove(ee_object)
-            self.ee_layers.remove(ee_object)
-            self.ee_layer_names.remove(name)
+            self.ee_layers.pop(name)
             if ee_layer in self.layers:
                 self.remove_layer(ee_layer)
 
@@ -552,17 +540,7 @@ class Map(ipyleaflet.Map):
         Returns:
             float: Map resolution in meters.
         """
-        import math
-
-        zoom_level = self.zoom
-        center_lat = self.center[0]
-
-        # Reference:
-        # - https://blogs.bing.com/maps/2006/02/25/map-control-zoom-levels-gt-resolution
-        # - https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames#Resolution_and_Scale
-        center_lat_cos = math.cos(math.radians(center_lat))
-        resolution = 156543.04 * center_lat_cos / math.pow(2, zoom_level)
-        return resolution
+        return core_utils.get_scale(self.center, self.zoom)
 
     getScale = get_scale
 
@@ -1097,8 +1075,8 @@ class Map(ipyleaflet.Map):
             else:
                 self.legends.append(legend_control)
 
-            if layer_name in self.ee_layer_names:
-                self.ee_layer_dict[layer_name]["legend"] = legend_control
+            if layer_name in self.ee_layers:
+                self.ee_layers[layer_name]["legend"] = legend_control
 
         except Exception as e:
             raise Exception(e)
@@ -1159,10 +1137,10 @@ class Map(ipyleaflet.Map):
         )
 
         self._colorbar = colormap_ctrl
-        if layer_name in self.ee_layer_names:
-            if "colorbar" in self.ee_layer_dict[layer_name]:
-                self.remove_control(self.ee_layer_dict[layer_name]["colorbar"])
-            self.ee_layer_dict[layer_name]["colorbar"] = colormap_ctrl
+        if layer_name in self.ee_layers:
+            if "colorbar" in self.ee_layers[layer_name]:
+                self.remove_control(self.ee_layers[layer_name]["colorbar"])
+            self.ee_layers[layer_name]["colorbar"] = colormap_ctrl
         if not hasattr(self, "colorbars"):
             self.colorbars = [colormap_ctrl]
         else:
@@ -1199,7 +1177,7 @@ class Map(ipyleaflet.Map):
         """Create a GUI for changing layer visualization parameters interactively.
 
         Args:
-            layer_dict (dict): A dict containning information about the layer. It is an element from Map.ee_layer_dict.
+            layer_dict (dict): A dict containning information about the layer. It is an element from Map.ee_layers.
 
         Returns:
             object: An ipywidget.
@@ -2426,16 +2404,16 @@ class Map(ipyleaflet.Map):
             def apply_btn_clicked(b):
                 compute_label.value = "Computing ..."
 
-                if new_layer_name.value in self.ee_layer_names:
+                if new_layer_name.value in self.ee_layers:
                     old_layer = new_layer_name.value
 
-                    if "legend" in self.ee_layer_dict[old_layer].keys():
-                        legend = self.ee_layer_dict[old_layer]["legend"]
+                    if "legend" in self.ee_layers[old_layer].keys():
+                        legend = self.ee_layers[old_layer]["legend"]
                         if legend in self.controls:
                             self.remove_control(legend)
                         legend.close()
-                    if "colorbar" in self.ee_layer_dict[old_layer].keys():
-                        colorbar = self.ee_layer_dict[old_layer]["colorbar"]
+                    if "colorbar" in self.ee_layers[old_layer].keys():
+                        colorbar = self.ee_layers[old_layer]["colorbar"]
                         if colorbar in self.controls:
                             self.remove_control(colorbar)
                         colorbar.close()
@@ -2558,43 +2536,43 @@ class Map(ipyleaflet.Map):
 
             return vis_widget
 
-    def add_inspector(
-        self,
-        names=None,
-        visible=True,
-        decimals=2,
-        position="topright",
-        opened=True,
-        show_close_button=True,
-    ):
-        """Add the Inspector GUI to the map.
+    # def add_inspector(
+    #     self,
+    #     names=None,
+    #     visible=True,
+    #     decimals=2,
+    #     position="topright",
+    #     opened=True,
+    #     show_close_button=True,
+    # ):
+    #     """Add the Inspector GUI to the map.
 
-        Args:
-            names (str | list, optional): The names of the layers to be included. Defaults to None.
-            visible (bool, optional): Whether to inspect visible layers only. Defaults to True.
-            decimals (int, optional): The number of decimal places to round the coordinates. Defaults to 2.
-            position (str, optional): The position of the Inspector GUI. Defaults to "topright".
-            opened (bool, optional): Whether the control is opened. Defaults to True.
-        """
-        if self.inspector_control:
-            return
+    #     Args:
+    #         names (str | list, optional): The names of the layers to be included. Defaults to None.
+    #         visible (bool, optional): Whether to inspect visible layers only. Defaults to True.
+    #         decimals (int, optional): The number of decimal places to round the coordinates. Defaults to 2.
+    #         position (str, optional): The position of the Inspector GUI. Defaults to "topright".
+    #         opened (bool, optional): Whether the control is opened. Defaults to True.
+    #     """
+    #     if self.inspector_control:
+    #         return
 
-        def _on_close():
-            self.toolbar_reset()
-            if self.inspector_control:
-                if self.inspector_control in self.controls:
-                    self.remove_control(self.inspector_control)
-                self.inspector_control.close()
-                self.inspector_control = None
+    #     def _on_close():
+    #         self.toolbar_reset()
+    #         if self.inspector_control:
+    #             if self.inspector_control in self.controls:
+    #                 self.remove_control(self.inspector_control)
+    #             self.inspector_control.close()
+    #             self.inspector_control = None
 
-        inspector = map_widgets.Inspector(
-            self, names, visible, decimals, opened, show_close_button
-        )
-        inspector.on_close = _on_close
-        self.inspector_control = ipyleaflet.WidgetControl(
-            widget=inspector, position=position
-        )
-        self.add(self.inspector_control)
+    #     inspector = map_widgets.Inspector(
+    #         self, names, visible, decimals, opened, show_close_button
+    #     )
+    #     inspector.on_close = _on_close
+    #     self.inspector_control = ipyleaflet.WidgetControl(
+    #         widget=inspector, position=position
+    #     )
+    #     self.add(self.inspector_control)
 
     def add_layer_manager(
         self, position="topright", opened=True, show_close_button=True
@@ -2618,7 +2596,7 @@ class Map(ipyleaflet.Map):
                 self.layer_manager_control = None
 
         def _on_open_vis(layer_name):
-            self.create_vis_widget(self.ee_layer_dict.get(layer_name, None))
+            self.create_vis_widget(self.ee_layers.get(layer_name, None))
 
         self.layer_manager_widget = map_widgets.LayerManager(self)
         self.layer_manager_widget.collapsed = not opened
@@ -2681,9 +2659,40 @@ class Map(ipyleaflet.Map):
             position (str, optional): The position of the toolbar. Defaults to "topright".
         """
 
-        from .toolbar import Toolbar, main_tools, extra_tools
+        from .core import core_widgets
+        from . import toolbar
 
-        self._toolbar = Toolbar(self, main_tools, extra_tools)
+        self._toolbar = core_widgets.Toolbar(
+            self, toolbar.MAIN_TOOLS, toolbar.EXTRA_TOOLS
+        )
+
+        def on_layers_toggled(is_open):
+            if is_open:
+                if self.layer_manager_control:
+                    return
+
+                def _on_open_vis(layer_name):
+                    self.create_vis_widget(self.ee_layers.get(layer_name, None))
+
+                self.layer_manager_widget = map_widgets.LayerManager(self)
+                self.layer_manager_widget.header_hidden = True
+                self.layer_manager_widget.close_button_hidden = True
+                self.layer_manager_widget.on_open_vis = _on_open_vis
+                self.layer_manager_control = ipyleaflet.WidgetControl(
+                    widget=self.layer_manager_widget
+                )
+                self._toolbar.set_accessory_widget(self.layer_manager_widget)
+            else:
+                self._toolbar.set_accessory_widget(None)
+
+                self.toolbar_reset()
+                if self.layer_manager_control:
+                    if self.layer_manager_control in self.controls:
+                        self.remove_control(self.layer_manager_control)
+                    self.layer_manager_control.close()
+                    self.layer_manager_control = None
+
+        self._toolbar.on_layers_toggled = on_layers_toggled
         toolbar_control = ipyleaflet.WidgetControl(
             widget=self._toolbar, position=position
         )
@@ -3708,8 +3717,8 @@ class Map(ipyleaflet.Map):
         else:
             self.colorbars.append(colormap_ctrl)
 
-        if layer_name in self.ee_layer_names:
-            self.ee_layer_dict[layer_name]["colorbar"] = colormap_ctrl
+        if layer_name in self.ee_layers:
+            self.ee_layers[layer_name]["colorbar"] = colormap_ctrl
 
     def image_overlay(self, url, bounds, name):
         """Overlays an image from the Internet or locally on the map.

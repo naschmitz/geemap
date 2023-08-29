@@ -7,7 +7,7 @@ class FakeMap:
         self.scale = 1024
         self.zoom = 7
         self.layers = []
-        self.ee_layer_dict = {}
+        self.ee_layers = {}
         self.geojson_layers = []
 
         self._recognized_attrs = self.__dict__.keys()
@@ -32,9 +32,6 @@ class FakeMap:
     def click(self, coordinates, event_type):
         for handler in self.interaction_handlers:
             handler(coordinates=coordinates, type=event_type)
-
-    def get_scale(self):
-        return self.scale
 
     @property
     def cursor_style(self):

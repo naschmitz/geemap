@@ -17,213 +17,12 @@ import ipyleaflet
 import ipywidgets as widgets
 from ipyfilechooser import FileChooser
 from IPython.core.display import display
-from typing import Callable
 
 from .common import *
 from .timelapse import *
-from .geemap import MapDrawControl
-from . import map_widgets
+from .core import core_widgets
 
-
-class Toolbar(widgets.VBox):
-    """A toolbar that can be added to the map."""
-
-    @dataclass
-    class Item:
-        """A representation of an item in the toolbar.
-
-        Attributes:
-            icon: The icon to use for the item, from https://fontawesome.com/icons.
-            tooltip: The tooltip text to show a user on hover.
-            callback: A callback function to execute when the item icon is clicked.
-                Its signature should be `callback(map, selected)`, where `map` is the
-                host map and `selected` is a boolean indicating if the user selected
-                or unselected the tool.
-            reset: Whether to reset the selection after the callback has finished.
-        """
-
-        icon: str
-        tooltip: str
-        callback: Callable[[any, bool], None]
-        reset: bool = True
-
-    ICON_WIDTH = "32px"
-    ICON_HEIGHT = "32px"
-    NUM_COLS = 3
-
-    _TOGGLE_TOOL_EXPAND_ICON = "plus"
-    _TOGGLE_TOOL_EXPAND_TOOLTIP = "Expand toolbar"
-    _TOGGLE_TOOL_COLLAPSE_ICON = "minus"
-    _TOGGLE_TOOL_COLLAPSE_TOOLTIP = "Collapse toolbar"
-
-    def __init__(self, host_map, main_tools, extra_tools=None):
-        """Adds a toolbar with `main_tools` and `extra_tools` to the `host_map`."""
-        if not main_tools:
-            raise ValueError("A toolbar cannot be initialized without `main_tools`.")
-        self.host_map = host_map
-        self.toggle_tool = Toolbar.Item(
-            icon=self._TOGGLE_TOOL_EXPAND_ICON,
-            tooltip=self._TOGGLE_TOOL_EXPAND_TOOLTIP,
-            callback=self._toggle_callback,
-        )
-
-        if extra_tools:
-            all_tools = main_tools + [self.toggle_tool] + extra_tools
-        else:
-            all_tools = main_tools
-        icons = [tool.icon for tool in all_tools]
-        tooltips = [tool.tooltip for tool in all_tools]
-        callbacks = [tool.callback for tool in all_tools]
-        resets = [tool.reset for tool in all_tools]
-        self.num_collapsed_tools = len(main_tools) + 1
-        # -(-a//b) is the same as math.ceil(a/b)
-        self.num_rows_expanded = -(-len(all_tools) // self.NUM_COLS)
-        self.num_rows_collapsed = -(-self.num_collapsed_tools // self.NUM_COLS)
-
-        self.all_widgets = [
-            widgets.ToggleButton(
-                layout=widgets.Layout(
-                    width="auto", height="auto", padding="0px 0px 0px 4px"
-                ),
-                button_style="primary",
-                icon=icons[i],
-                tooltip=tooltips[i],
-            )
-            for i in range(len(all_tools))
-        ]
-        self.toggle_widget = self.all_widgets[len(main_tools)] if extra_tools else None
-
-        # We start with a collapsed grid of just the main tools and the toggle one.
-        self.grid = widgets.GridBox(
-            children=self.all_widgets[: self.num_collapsed_tools],
-            layout=widgets.Layout(
-                width="109px",
-                grid_template_columns=(self.ICON_WIDTH + " ") * self.NUM_COLS,
-                grid_template_rows=(self.ICON_HEIGHT + " ") * self.num_rows_collapsed,
-                grid_gap="1px 1px",
-                padding="5px",
-            ),
-        )
-
-        def curry_callback(callback, should_reset_after, widget):
-            def returned_callback(change):
-                if change["type"] != "change":
-                    return
-                # Unselect all other tool widgets.
-                self._reset_others(widget)
-                callback(self.host_map, change["new"])
-                if should_reset_after:
-                    widget.value = False
-
-            return returned_callback
-
-        for id, widget in enumerate(self.all_widgets):
-            widget.observe(curry_callback(callbacks[id], resets[id], widget), "value")
-
-        self.toolbar_button = widgets.ToggleButton(
-            value=False,
-            tooltip="Toolbar",
-            icon="wrench",
-            layout=widgets.Layout(
-                width="28px", height="28px", padding="0px 0px 0px 4px"
-            ),
-        )
-
-        self.layers_button = widgets.ToggleButton(
-            value=False,
-            tooltip="Layers",
-            icon="server",
-            layout=widgets.Layout(height="28px", width="72px"),
-        )
-
-        self.toolbar_header = widgets.HBox()
-        self.toolbar_header.children = [self.layers_button, self.toolbar_button]
-        self.toolbar_footer = widgets.VBox()
-        self.toolbar_footer.children = [self.grid]
-
-        self.toolbar_button.observe(self._toolbar_btn_click, "value")
-        self.layers_button.observe(self._layers_btn_click, "value")
-
-        super().__init__(children=[self.toolbar_button])
-        toolbar_event = ipyevents.Event(
-            source=self, watched_events=["mouseenter", "mouseleave"]
-        )
-        toolbar_event.on_dom_event(self._handle_toolbar_event)
-
-    def reset(self):
-        """Resets the toolbar so that no widget is selected."""
-        for widget in self.all_widgets:
-            widget.value = False
-
-    def _reset_others(self, current):
-        for other in self.all_widgets:
-            if other is not current:
-                other.value = False
-
-    def _toggle_callback(self, m, selected):
-        del m  # unused
-        if not selected:
-            return
-        if self.toggle_widget.icon == self._TOGGLE_TOOL_EXPAND_ICON:
-            self.grid.layout.grid_template_rows = (
-                self.ICON_HEIGHT + " "
-            ) * self.num_rows_expanded
-            self.grid.children = self.all_widgets
-            self.toggle_widget.tooltip = self._TOGGLE_TOOL_COLLAPSE_TOOLTIP
-            self.toggle_widget.icon = self._TOGGLE_TOOL_COLLAPSE_ICON
-        elif self.toggle_widget.icon == self._TOGGLE_TOOL_COLLAPSE_ICON:
-            self.grid.layout.grid_template_rows = (
-                self.ICON_HEIGHT + " "
-            ) * self.num_rows_collapsed
-            self.grid.children = self.all_widgets[: self.num_collapsed_tools]
-            self.toggle_widget.tooltip = self._TOGGLE_TOOL_EXPAND_TOOLTIP
-            self.toggle_widget.icon = self._TOGGLE_TOOL_EXPAND_ICON
-
-    def _handle_toolbar_event(self, event):
-        if event["type"] == "mouseenter":
-            self.children = [self.toolbar_header, self.toolbar_footer]
-        elif event["type"] == "mouseleave":
-            if not self.toolbar_button.value:
-                self.children = [self.toolbar_button]
-                self.toolbar_button.value = False
-                self.layers_button.value = False
-
-    def _toolbar_btn_click(self, change):
-        if change["new"]:
-            self.layers_button.value = False
-            self.children = [self.toolbar_header, self.toolbar_footer]
-        else:
-            if not self.layers_button.value:
-                self.children = [self.toolbar_button]
-
-    def _layers_btn_click(self, change):
-        if change["new"]:
-            # Create Layer Manager Widget
-            if self.host_map.layer_manager_control:
-                return
-
-            def _on_open_vis(layer_name):
-                self.host_map.create_vis_widget(
-                    self.host_map.ee_layer_dict.get(layer_name, None)
-                )
-
-            self.host_map.layer_manager_widget = map_widgets.LayerManager(self.host_map)
-            self.host_map.layer_manager_widget.header_hidden = True
-            self.host_map.layer_manager_widget.close_button_hidden = True
-            self.host_map.layer_manager_widget.on_open_vis = _on_open_vis
-            self.host_map.layer_manager_control = ipyleaflet.WidgetControl(
-                widget=self.host_map.layer_manager_widget
-            )
-            self.toolbar_footer.children = [self.host_map.layer_manager_widget]
-        else:
-            self.toolbar_footer.children = [self.grid]
-
-            self.host_map.toolbar_reset()
-            if self.host_map.layer_manager_control:
-                if self.host_map.layer_manager_control in self.host_map.controls:
-                    self.host_map.remove_control(self.host_map.layer_manager_control)
-                self.host_map.layer_manager_control.close()
-                self.host_map.layer_manager_control = None
+# from .geemap import MapDrawControl
 
 
 def inspector_gui(m=None):
@@ -1941,16 +1740,16 @@ def collect_samples(m):
         if change["new"] == "Apply":
             if len(color.value) != 7:
                 color.value = "#3388ff"
-            draw_control = MapDrawControl(
-                host_map=m,
-                marker={"shapeOptions": {"color": color.value}, "repeatMode": False},
-                rectangle={"shapeOptions": {"color": color.value}, "repeatMode": False},
-                polygon={"shapeOptions": {"color": color.value}, "repeatMode": False},
-                circlemarker={},
-                polyline={},
-                edit=False,
-                remove=False,
-            )
+            # draw_control = MapDrawControl(
+            #     host_map=m,
+            #     marker={"shapeOptions": {"color": color.value}, "repeatMode": False},
+            #     rectangle={"shapeOptions": {"color": color.value}, "repeatMode": False},
+            #     polygon={"shapeOptions": {"color": color.value}, "repeatMode": False},
+            #     circlemarker={},
+            #     polyline={},
+            #     edit=False,
+            #     remove=False,
+            # )
             m.remove_draw_control()
             m.add(draw_control)
             m.draw_control = draw_control
@@ -1972,10 +1771,11 @@ def collect_samples(m):
 
             # Handles draw events
             def set_properties(_, geometry):
-                if len(train_props) > 0:
-                    draw_control.set_geometry_properties(geometry, train_props)
+                pass
+                # if len(train_props) > 0:
+                #     draw_control.set_geometry_properties(geometry, train_props)
 
-            draw_control.on_geometry_create(set_properties)
+            # draw_control.on_geometry_create(set_properties)
 
         elif change["new"] == "Clear":
             prop_text1.value = ""
@@ -3205,8 +3005,8 @@ def time_slider(m=None):
                 with output:
                     print("Use the Drawing tool to create an ROI.")
                     return
-            elif region.value in m.ee_layer_dict:
-                roi = m.ee_layer_dict[region.value]["ee_object"]
+            elif region.value in m.ee_layers:
+                roi = m.ee_layers[region.value]["ee_object"]
 
             with output:
                 print("Computing... Please wait...")
@@ -3255,7 +3055,7 @@ def time_slider(m=None):
                     raise ValueError(e)
 
             if collection.value in m.ee_raster_layer_names:
-                layer = m.ee_layer_dict[collection.value]
+                layer = m.ee_layers[collection.value]
                 ee_object = layer["ee_object"]
             elif collection.value in col_options_dict:
                 start_date = str(start_month.value).zfill(2) + "-01"
@@ -3362,13 +3162,13 @@ def time_slider(m=None):
     def collection_changed(change):
         if change["new"]:
             selected = change["owner"].value
-            if selected in m.ee_layer_dict:
+            if selected in m.ee_layers:
                 prebuilt_options.children = []
                 labels.value = ""
                 region.value = None
 
-                ee_object = m.ee_layer_dict[selected]["ee_object"]
-                vis_params = m.ee_layer_dict[selected]["vis_params"]
+                ee_object = m.ee_layers[selected]["ee_object"]
+                vis_params = m.ee_layers[selected]["vis_params"]
                 if isinstance(ee_object, ee.Image):
                     palette_vbox.children = [
                         widgets.HBox([classes, colormap]),
@@ -3706,7 +3506,7 @@ def plot_transect(m=None):
         layer.options = m.ee_raster_layer_names
         layer.value = layer.options[0]
         if len(layer.options) > 0:
-            image = m.ee_layer_dict[layer.value]["ee_object"]
+            image = m.ee_layers[layer.value]["ee_object"]
             if isinstance(image, ee.ImageCollection):
                 image = image.toBands()
             band.options = image.bandNames().getInfo()
@@ -3720,7 +3520,7 @@ def plot_transect(m=None):
     def layer_changed(change):
         if change["new"]:
             if m is not None:
-                image = m.ee_layer_dict[layer.value]["ee_object"]
+                image = m.ee_layers[layer.value]["ee_object"]
                 if isinstance(image, ee.ImageCollection):
                     image = image.toBands()
                 band.options = image.bandNames().getInfo()
@@ -3775,7 +3575,7 @@ def plot_transect(m=None):
                         if geom_type != "LineString":
                             print("Use drawing tool to draw a line")
                         else:
-                            image = m.ee_layer_dict[layer.value]["ee_object"]
+                            image = m.ee_layers[layer.value]["ee_object"]
                             if isinstance(image, ee.ImageCollection):
                                 image = image.toBands()
                             image = image.select([band.value])
@@ -4201,7 +4001,7 @@ def sankee_gui(m=None):
                         image1 = image1.clip(geom)
                         image2 = image2.clip(geom)
                     else:
-                        roi_object = m.ee_layer_dict[region.value]["ee_object"]
+                        roi_object = m.ee_layers[region.value]["ee_object"]
                         if region.value == "Las Vegas":
                             m.centerObject(roi_object, 10)
                         if isinstance(roi_object, ee.Geometry):
@@ -4438,30 +4238,30 @@ def _open_help_page_callback(map, selected):
         webbrowser.open_new_tab("https://geemap.org")
 
 
-main_tools = [
-    Toolbar.Item(
+MAIN_TOOLS = [
+    core_widgets.Toolbar.Item(
         icon="info",
         tooltip="Inspector",
         callback=lambda m, selected: m.add_inspector() if selected else None,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="bar-chart",
         tooltip="Plotting",
         callback=_plotting_tool_callback,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="globe",
         tooltip="Create timelapse",
         callback=lambda m, selected: timelapse_gui(m) if selected else None,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="map",
         tooltip="Change basemap",
         callback=lambda m, selected: change_basemap(m) if selected else None,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="retweet",
         tooltip="Convert Earth Engine JavaScript to Python",
         callback=_convert_js_tool_callback,
@@ -4469,65 +4269,65 @@ main_tools = [
     ),
 ]
 
-extra_tools = [
-    Toolbar.Item(
+EXTRA_TOOLS = [
+    core_widgets.Toolbar.Item(
         icon="eraser",
         tooltip="Remove all drawn features",
         callback=lambda m, selected: m.remove_drawn_features() if selected else None,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="folder-open",
         tooltip="Open local vector/raster data",
         callback=lambda m, selected: open_data_widget(m) if selected else None,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="gears",
         tooltip="WhiteboxTools for local geoprocessing",
         callback=_whitebox_tool_callback,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="google",
         tooltip="GEE Toolbox for cloud computing",
         callback=_gee_toolbox_tool_callback,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="fast-forward",
         tooltip="Activate timeslider",
         callback=lambda m, selected: time_slider(m) if selected else None,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="hand-o-up",
         tooltip="Collect training samples",
         callback=_collect_samples_tool_callback,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="line-chart",
         tooltip="Creating and plotting transects",
         callback=lambda m, selected: plot_transect(m) if selected else None,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="random",
         tooltip="Sankey plots",
         callback=lambda m, selected: sankee_gui(m) if selected else None,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="adjust",
         tooltip="Planet imagery",
         callback=_split_basemaps_tool_callback,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="info-circle",
         tooltip="Get COG/STAC pixel value",
         callback=lambda m, selected: inspector_gui(m) if selected else None,
         reset=False,
     ),
-    Toolbar.Item(
+    core_widgets.Toolbar.Item(
         icon="question",
         tooltip="Get help",
         callback=_open_help_page_callback,
