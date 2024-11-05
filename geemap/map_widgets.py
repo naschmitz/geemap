@@ -2,6 +2,7 @@
 
 import functools
 import pathlib
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import IPython
@@ -519,7 +520,7 @@ class Inspector(anywidget.AnyWidget):
     """Inspector widget for Earth Engine data."""
 
     _esm = pathlib.Path(__file__).parent / "static" / "inspector.js"
-    
+
     hide_close_button = traitlets.Bool(False).tag(sync=True)
 
     expand_points = traitlets.Bool(False).tag(sync=True)
@@ -860,7 +861,7 @@ class LayerManagerRow(anywidget.AnyWidget):
 
     def _open_layer_editor(self) -> None:
         metadata = self.host_map.ee_layers.get(self.name, None)
-        self.host_map.add("layer_editor", position="bottomright", layer_dict=metadata)
+        self.host_map.add("layer_editor", position="bottomleft", layer_dict=metadata)
 
     def _delete_layer(self) -> None:
         self.host_map.remove_layer(self.layer)
@@ -958,8 +959,15 @@ class Basemap(ipywidgets.HBox):
 
 
 @Theme.apply
-class LayerEditor(ipywidgets.VBox):
+class LayerEditor(anywidget.AnyWidget):
     """Widget for displaying and editing layer visualization properties."""
+
+    _esm = pathlib.Path(__file__).parent / "static" / "layer_editor.js"
+
+    title = traitlets.Unicode("").tag(sync=True)
+    type = traitlets.Unicode("").tag(sync=True)
+    band_names = traitlets.List([]).tag(sync=True)
+    colormaps = traitlets.List([]).tag(sync=True)
 
     def __init__(self, host_map: "geemap.Map", layer_dict: Optional[Dict[str, Any]]):
         """Initializes a layer editor widget.
@@ -968,129 +976,142 @@ class LayerEditor(ipywidgets.VBox):
             host_map (geemap.Map): The geemap.Map object.
             layer_dict (Optional[Dict[str, Any]]): The layer object to edit.
         """
+        super().__init__()
 
         self.on_close = None
-
         self._host_map = host_map
         if not host_map:
             raise ValueError(
                 f"Must pass a valid map when creating a {self.__class__.__name__} widget."
             )
 
-        self._toggle_button = ipywidgets.ToggleButton(
-            value=True,
-            tooltip="Layer editor",
-            icon="gear",
-            layout=ipywidgets.Layout(
-                width="28px", height="28px", padding="0px 0 0 3px"
-            ),
-        )
-        self._toggle_button.observe(self._on_toggle_click, "value")
+        # self._apply_button = ipywidgets.Button(
+        #     description="Apply", tooltip="Apply vis params to the layer", layout=layout
+        # )
+        # self._import_button.on_click(self._on_import_click)
+        # self._apply_button.on_click(self._on_apply_click)
 
-        self._close_button = ipywidgets.Button(
-            tooltip="Close the vis params dialog",
-            icon="times",
-            button_style="primary",
-            layout=ipywidgets.Layout(width="28px", height="28px", padding="0"),
-        )
-        self._close_button.on_click(self._on_close_click)
-
-        layout = ipywidgets.Layout(width="95px")
-        self._import_button = ipywidgets.Button(
-            description="Import",
-            button_style="primary",
-            tooltip="Import vis params to notebook",
-            layout=layout,
-        )
-        self._apply_button = ipywidgets.Button(
-            description="Apply", tooltip="Apply vis params to the layer", layout=layout
-        )
-        self._import_button.on_click(self._on_import_click)
-        self._apply_button.on_click(self._on_apply_click)
-
-        self._label = ipywidgets.Label(
-            value="Layer name",
-            layout=ipywidgets.Layout(max_width="250px", padding="1px 8px 0 4px"),
-        )
-        self._embedded_widget = ipywidgets.Label(value="Vis params are uneditable")
+        # self._label = ipywidgets.Label(
+        #     value="Layer name",
+        #     layout=ipywidgets.Layout(max_width="250px", padding="1px 8px 0 4px"),
+        # )
+        # self._embedded_widget = ipywidgets.Label(value="Vis params are uneditable")
         if layer_dict is not None:
             self._ee_object = layer_dict["ee_object"]
             if isinstance(self._ee_object, (ee.Feature, ee.Geometry)):
                 self._ee_object = ee.FeatureCollection(self._ee_object)
 
             self._ee_layer = layer_dict["ee_layer"]
-            self._label.value = self._ee_layer.name
+            self.title = self._ee_layer.name
+            self.type = ""
+            self.colormaps = self._get_colormaps()
+            import pprint
+
+            pprint.pprint(self.colormaps)
             if isinstance(self._ee_object, ee.FeatureCollection):
-                self._embedded_widget = _VectorLayerEditor(
-                    host_map=host_map, layer_dict=layer_dict
-                )
+                self.type = "vector"
             elif isinstance(self._ee_object, ee.Image):
-                self._embedded_widget = _RasterLayerEditor(
-                    host_map=host_map, layer_dict=layer_dict
-                )
+                self.type = "raster"
+                self.band_names = self._ee_object.bandNames().getInfo()
 
-        super().__init__(children=[])
-        self._on_toggle_click({"new": True})
+        self.on_msg(self._handle_message_event)
 
-    def _on_toggle_click(self, change: Dict[str, Any]) -> None:
-        """Handles the toggle button click event.
-
-        Args:
-            change (Dict[str, Any]): The change event arguments.
-        """
-        if change["new"]:
-            self.children = [
-                ipywidgets.HBox([self._close_button, self._toggle_button, self._label]),
-                self._embedded_widget,
-                ipywidgets.HBox([self._import_button, self._apply_button]),
-            ]
-        else:
-            self.children = [
-                ipywidgets.HBox([self._close_button, self._toggle_button, self._label]),
-            ]
-
-    def _on_import_click(self, _) -> None:
-        """Handles the import button click event."""
-        self._embedded_widget.on_import_click()
-
-    def _on_apply_click(self, _) -> None:
-        """Handles the apply button click event."""
-        self._embedded_widget.on_apply_click()
-
-    def _on_close_click(self, _) -> None:
+    def _on_close_click(self) -> None:
         """Handles the close button click event."""
+        print("LayerEditor _on_close_click")
         if self.on_close:
             self.on_close()
 
+    def _handle_message_event(
+        self, widget: ipywidgets.Widget, content: Dict[str, Any], buffers: List[Any]
+    ) -> None:
+        print("LayerEditor _handle_message_event")
+        del widget, buffers  # Unused
+        if content.get("type") == "click" and content.get("id") == "close":
+            self._on_close_click()
+        elif content.get("type") == "calculate" and content.get("id") == "band-stats":
+            (s, w), (n, e) = self._host_map.bounds
+            map_bbox = ee.Geometry.BBox(west=w, south=s, east=e, north=n)
+            vis_bands = content.get("detail", {}).get("bands")
+            stretch = content.get("detail", {}).get("stretch")
+            if stretch == "custom":
+                return
+            stretch_params = {}
+            stretch_value = int(re.search(r"\d+", stretch).group())
+            if stretch.startswith("percent"):
+                stretch_params["percent"] = stretch_value / 100.0
+            elif stretch.startswith("sigma"):
+                stretch_params["sigma"] = stretch_value
+            print(vis_bands, vis_bands, stretch_params)
+            min_val, max_val = self._ee_layer.calculate_vis_minmax(
+                bounds=map_bbox, bands=vis_bands, **stretch_params
+            )
+            self.send(
+                {"bandstats": {"stretch": stretch, "min": min_val, "max": max_val}}
+            )
 
-def _tokenize_legend_colors(string: str, delimiter: str = ",") -> List[str]:
-    """Tokenizes a string of legend colors.
+    def _get_colormaps(self) -> List[str]:
+        """Gets the list of available colormaps."""
+        from matplotlib import pyplot  # pylint: disable=import-outside-toplevel
 
-    Args:
-        string (str): The string of legend colors.
-        delimiter (str, optional): The delimiter used to split the string. Defaults to ",".
+        colormap_options = pyplot.colormaps()
+        colormap_options.sort()
+        return colormap_options
 
-    Returns:
-        List[str]: A list of hex color strings.
-    """
-    return coreutils.to_hex_colors([c.strip() for c in string.split(delimiter)])
+    # def _on_toggle_click(self, change: Dict[str, Any]) -> None:
+    #     """Handles the toggle button click event.
+
+    #     Args:
+    #         change (Dict[str, Any]): The change event arguments.
+    #     """
+    #     if change["new"]:
+    #         self.children = [
+    #             ipywidgets.HBox([self._close_button, self._toggle_button, self._label]),
+    #             self._embedded_widget,
+    #             ipywidgets.HBox([self._import_button, self._apply_button]),
+    #         ]
+    #     else:
+    #         self.children = [
+    #             ipywidgets.HBox([self._close_button, self._toggle_button, self._label]),
+    #         ]
+
+    # def _on_import_click(self, _) -> None:
+    #     """Handles the import button click event."""
+    #     self._embedded_widget.on_import_click()
+
+    # def _on_apply_click(self, _) -> None:
+    #     """Handles the apply button click event."""
+    #     self._embedded_widget.on_apply_click()
 
 
-def _tokenize_legend_labels(string: str, delimiter: str = ",") -> List[str]:
-    """Tokenizes a string of legend labels.
+# def _tokenize_legend_colors(string: str, delimiter: str = ",") -> List[str]:
+#     """Tokenizes a string of legend colors.
 
-    Args:
-        string (str): The string of legend labels.
-        delimiter (str, optional): The delimiter used to split the string. Defaults to ",".
+#     Args:
+#         string (str): The string of legend colors.
+#         delimiter (str, optional): The delimiter used to split the string. Defaults to ",".
 
-    Returns:
-        List[str]: A list of legend labels.
-    """
-    return [l.strip() for l in string.split(delimiter)]
+#     Returns:
+#         List[str]: A list of hex color strings.
+#     """
+#     return coreutils.to_hex_colors([c.strip() for c in string.split(delimiter)])
+
+
+# def _tokenize_legend_labels(string: str, delimiter: str = ",") -> List[str]:
+#     """Tokenizes a string of legend labels.
+
+#     Args:
+#         string (str): The string of legend labels.
+#         delimiter (str, optional): The delimiter used to split the string. Defaults to ",".
+
+#     Returns:
+#         List[str]: A list of legend labels.
+#     """
+#     return [l.strip() for l in string.split(delimiter)]
 
 
 @Theme.apply
-class _RasterLayerEditor(ipywidgets.VBox):
+class _RasterLayerEditor(anywidget.AnyWidget):
     """Widget for displaying and editing layer visualization properties for raster layers."""
 
     def __init__(self, host_map: "geemap.Map", layer_dict: Dict[str, Any]):

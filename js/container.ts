@@ -6,7 +6,9 @@ import { materialStyles } from './material_styles';
 import { reverseMap } from './utils';
 
 export interface ContainerModel {
+    title: string;
     collapsed: boolean;
+    hide_close_button: boolean;
 }
 
 export class Container extends LitElement {
@@ -37,6 +39,12 @@ export class Container extends LitElement {
                 height: 28px;
                 width: 28px;
             }
+
+            .header-text {
+                align-content: center;
+                padding-left: 4px;
+                padding-right: 4px;
+            }
         `,
     ];
 
@@ -44,7 +52,11 @@ export class Container extends LitElement {
     private static modelNameToViewName = new Map<
         keyof ContainerModel,
         keyof Container
-    >([['collapsed', 'collapsed']]);
+    >([
+        ['collapsed', 'collapsed'],
+        ['title', 'title'],
+        ['hide_close_button', 'hideCloseButton'],
+    ]);
     private static viewNameToModelName = reverseMap(
         Container.modelNameToViewName,
     );
@@ -61,6 +73,7 @@ export class Container extends LitElement {
         }
     }
 
+    @property() title: string = "";
     @property() collapsed: boolean = false;
     @property() hideCloseButton: boolean = false;
 
@@ -79,6 +92,11 @@ export class Container extends LitElement {
                 >
                     ${this.renderCollapseButtonIcon()}
                 </button>
+                <span
+                    class="legacy-text header-text ${this.title ? '' : 'hidden'}"
+                >
+                    ${this.title}
+                </span>
             </div>
             <div class="widget-container ${this.collapsed ? 'hidden' : ''}">
                 <slot></slot>

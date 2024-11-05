@@ -181,11 +181,13 @@ artifacts = ["geemap/static/*"]
 build-function = "hatch_jupyter_builder.npm_builder"
 ensured-targets = [
     "geemap/static/inspector.js",
+    "geemap/static/layer_editor.js",
     "geemap/static/layer_manager_row.js",
     "geemap/static/layer_manager.js",
 ]
 skip-if-exists = [
     "geemap/static/inspector.js",
+    "geemap/static/layer_editor.js",
     "geemap/static/layer_manager_row.js",
     "geemap/static/layer_manager.js",
 ]
