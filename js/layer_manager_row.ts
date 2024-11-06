@@ -4,7 +4,7 @@ import { property } from "lit/decorators.js";
 import { classMap } from 'lit/directives/class-map.js';
 
 import { legacyStyles } from './ipywidgets_styles';
-import { materialStyles } from "./material_styles";
+import { materialStyles } from "./styles";
 import { loadFonts } from "./utils";
 
 export interface LayerManagerRowModel {

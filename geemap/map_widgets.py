@@ -969,6 +969,13 @@ class LayerEditor(anywidget.AnyWidget):
     band_names = traitlets.List([]).tag(sync=True)
     colormaps = traitlets.List([]).tag(sync=True)
 
+    # Child widgets in the container. Using a tuple here to force reassignment to update
+    # the list. When a proper notifying-list trait exists, use that instead.
+    children = TypedTuple(
+        trait=traitlets.Instance(ipywidgets.Widget),
+        help="List of widget children",
+    ).tag(sync=True, **ipywidgets.widget_serialization)
+
     def __init__(self, host_map: "geemap.Map", layer_dict: Optional[Dict[str, Any]]):
         """Initializes a layer editor widget.
 
@@ -1030,25 +1037,95 @@ class LayerEditor(anywidget.AnyWidget):
         if content.get("type") == "click" and content.get("id") == "close":
             self._on_close_click()
         elif content.get("type") == "calculate" and content.get("id") == "band-stats":
-            (s, w), (n, e) = self._host_map.bounds
-            map_bbox = ee.Geometry.BBox(west=w, south=s, east=e, north=n)
-            vis_bands = content.get("detail", {}).get("bands")
-            stretch = content.get("detail", {}).get("stretch")
-            if stretch == "custom":
-                return
-            stretch_params = {}
-            stretch_value = int(re.search(r"\d+", stretch).group())
-            if stretch.startswith("percent"):
-                stretch_params["percent"] = stretch_value / 100.0
-            elif stretch.startswith("sigma"):
-                stretch_params["sigma"] = stretch_value
-            print(vis_bands, vis_bands, stretch_params)
-            min_val, max_val = self._ee_layer.calculate_vis_minmax(
-                bounds=map_bbox, bands=vis_bands, **stretch_params
-            )
-            self.send(
-                {"bandstats": {"stretch": stretch, "min": min_val, "max": max_val}}
-            )
+            bandstats = self._calculate_bandstats(content)
+            if bandstats:
+                self.send({"bandstats": bandstats})
+        elif content.get("type") == "calculate" and content.get("id") == "palette":
+            palette = self._calculate_palette(content)
+            if palette:
+                self.send({"palette": palette})
+
+    def _calculate_bandstats(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        details = message.get("detail", {})
+        (s, w), (n, e) = self._host_map.bounds
+        map_bbox = ee.Geometry.BBox(west=w, south=s, east=e, north=n)
+        vis_bands = details.get("bands")
+        stretch = details.get("stretch")
+        if stretch == "custom":
+            return None
+        stretch_params = {}
+        stretch_value = int(re.search(r"\d+", stretch).group())
+        if stretch.startswith("percent"):
+            stretch_params["percent"] = stretch_value / 100.0
+        elif stretch.startswith("sigma"):
+            stretch_params["sigma"] = stretch_value
+        # print(vis_bands, vis_bands, stretch_params)
+        min_val, max_val = self._ee_layer.calculate_vis_minmax(
+            bounds=map_bbox, bands=vis_bands, **stretch_params
+        )
+        return {"stretch": stretch, "min": min_val, "max": max_val}
+
+    def _calculate_palette(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        details = message.get("detail", {})
+
+        import matplotlib  # pylint: disable=import-outside-toplevel
+        from matplotlib import pyplot  # pylint: disable=import-outside-toplevel
+
+        colormap = details.get("colormap")
+        classes = details.get("classes")
+        palette = details.get("palette")
+        band_min = details.get("bandMin")
+        band_max = details.get("bandMax")
+
+        if colormap == "Custom":
+            return {"palette": palette}
+
+        if classes == "Any":
+            classes = None
+
+        # if colormap == "Custom":
+        #     return None
+
+        cmap = pyplot.get_cmap(colormap, classes)
+        cmap_colors = [matplotlib.colors.rgb2hex(cmap(i))[1:] for i in range(cmap.N)]
+        colors = coreutils.to_hex_colors(cmap_colors)
+
+        _, ax = pyplot.subplots(figsize=(4, 0.3))
+        cmap = matplotlib.colors.LinearSegmentedColormap.from_list(
+            "custom", colors, N=256
+        )
+        norm = matplotlib.colors.Normalize(vmin=band_min, vmax=band_max)
+        matplotlib.colorbar.ColorbarBase(
+            ax, norm=norm, cmap=cmap, orientation="horizontal"
+        )
+
+        colorbar_output = ipywidgets.Output(
+            layout=ipywidgets.Layout(height="60px", max_width="300px")
+        )
+        with colorbar_output:
+            pyplot.show()
+        self.children = [colorbar_output]
+
+        return {"palette": ", ".join(colors)}
+
+        # selected = change["owner"].value
+        # if self._colormap_dropdown.value is not None:
+        #     n_class = None
+        #     if selected != "Any":
+        #         n_class = int(self._classes_dropdown.value)
+
+        #     colors = pyplot.get_cmap(self._colormap_dropdown.value, n_class)
+        #     cmap_colors = [
+        #         matplotlib.colors.rgb2hex(colors(i))[1:] for i in range(colors.N)
+        #     ]
+        #     self._render_colorbar(cmap_colors)
+
+        #     if self._palette_label.value and "," in self._palette_label.value:
+        #         labels = [
+        #             f"Class {i+1}"
+        #             for i in range(len(self._palette_label.value.split(",")))
+        #         ]
+        #         self._legend_labels_label.value = ", ".join(labels)
 
     def _get_colormaps(self) -> List[str]:
         """Gets the list of available colormaps."""
@@ -1056,7 +1133,7 @@ class LayerEditor(anywidget.AnyWidget):
 
         colormap_options = pyplot.colormaps()
         colormap_options.sort()
-        return colormap_options
+        return ["Custom"] + colormap_options
 
     # def _on_toggle_click(self, change: Dict[str, Any]) -> None:
     #     """Handles the toggle button click event.

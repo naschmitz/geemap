@@ -1,26 +1,34 @@
 import type { AnyModel } from "@anywidget/types";
 import { IWidgetManager, WidgetModel } from "@jupyter-widgets/base";
+import { html, TemplateResult } from "lit";
 
-async function unpackModels(modelIds: Array<string>, manager: IWidgetManager): Promise<Array<WidgetModel>> {
+async function unpackModels(
+    modelIds: Array<string>,
+    manager: IWidgetManager
+): Promise<Array<WidgetModel>> {
     return Promise.all(
-        modelIds.map(id => manager.get_model(id.slice("IPY_MODEL_".length)))
+        modelIds.map((id) => manager.get_model(id.slice("IPY_MODEL_".length)))
     );
 }
 
 export function loadFonts() {
-    if (!document.querySelector('.custom-fonts')) {
-        const styleElement = document.createElement('style');
-        styleElement.classList.add('custom-fonts');
-        styleElement.textContent = '@import "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined";'
+    if (!document.querySelector(".custom-fonts")) {
+        const styleElement = document.createElement("style");
+        styleElement.classList.add("custom-fonts");
+        styleElement.textContent =
+            '@import "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined";';
         document.body.appendChild(styleElement);
     }
 }
 
-export async function updateChildren(container: HTMLElement, model: AnyModel<any>) {
+export async function updateChildren(
+    container: HTMLElement,
+    model: AnyModel<any>
+) {
     const children = model.get("children");
     const child_models = await unpackModels(children, model.widget_manager);
     const child_views = await Promise.all(
-        child_models.map(model => model.widget_manager.create_view(model))
+        child_models.map((model) => model.widget_manager.create_view(model))
     );
     container.innerHTML = ``;
     for (const child_view of child_views) {
@@ -34,4 +42,29 @@ export function reverseMap<K, V>(map: Map<K, V>): Map<V, K> {
         reversedMap.set(value, key);
     }
     return reversedMap;
+}
+
+export interface SelectOption {
+    label: string;
+    value: string;
+}
+
+export function renderSelect(
+    options: Array<SelectOption> | Array<string>,
+    value: string,
+    callback: (event: Event) => void
+): TemplateResult {
+    const newOptions = options.map((option) => {
+        const isString = typeof option === "string" || option instanceof String;
+        const optValue = isString ? option : option.value;
+        const optLabel = isString ? option : option.label;
+        return html`
+            <option value=${optValue} ?selected=${value === optValue}>
+                ${optLabel}
+            </option>
+        `;
+    });
+    return html`<select @change="${callback}">
+        ${newOptions}
+    </select>`;
 }

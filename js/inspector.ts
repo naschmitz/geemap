@@ -9,7 +9,7 @@ import {
 } from 'lit';
 import { property } from 'lit/decorators.js';
 import { legacyStyles } from './ipywidgets_styles';
-import { materialStyles } from './material_styles';
+import { materialStyles } from './styles';
 import { reverseMap } from './utils';
 
 import './container';
